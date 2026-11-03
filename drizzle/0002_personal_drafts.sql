@@ -1,0 +1,1 @@
+ALTER TABLE "drafts" ADD COLUMN "personal" boolean DEFAULT false NOT NULL;

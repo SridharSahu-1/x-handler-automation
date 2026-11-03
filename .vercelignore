@@ -1,0 +1,4 @@
+.env.local
+.pglite
+public/generated
+samples

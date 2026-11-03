@@ -1,8 +1,9 @@
 import type { NextConfig } from "next";
+import { withWorkflow } from "workflow/next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
   cacheComponents: true,
+  serverExternalPackages: ["@electric-sql/pglite", "typescript"],
   partialPrefetching: true,
   turbopack: {
     rules: {
@@ -14,4 +15,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withWorkflow(nextConfig);
