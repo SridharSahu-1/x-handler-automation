@@ -9,7 +9,7 @@ import { addReplyTarget } from "../actions";
 export default function Page() {
   return (
     <>
-      <PageTitle sub="The #1 growth lever at 0 followers. The app only drafts; you post each reply yourself (automated replies get accounts suspended).">Replies</PageTitle>
+      <PageTitle sub="Draft responses in your voice and review each one before posting. For comments on your own posts, send /comments to your Telegram bot.">Replies</PageTitle>
       <div className="mb-4"><RunReplies /></div>
       <Suspense fallback={<Skeleton />}>
         <Body />

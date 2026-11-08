@@ -141,3 +141,9 @@ lib/assets/        code/list/compare cards via next/og
 - **Buffer is a third party.** If they change the free plan, switch to manual mode (remove `BUFFER_API_KEY`) and nothing else changes.
 - **The X profile endpoints are v1.1.** With X API keys, if X removes them from pay-per-use, `pnpm smoke --write` will tell you.
 - **Vercel Hobby cron fires anywhere within its hour.** The workflow sleeps until your exact slot, so this doesn't matter as long as the slot is after the cron hour.
+
+## Respond to comments without X API fees
+
+Send `/comments` to your Telegram bot (or `/comments <comment-link>`). Open your post, copy the **comment's** link, and paste it in Telegram. The bot drafts responses in your voice. Choose a suggestion, tap **Reply on X**, and press Post yourself. If X's public embed cannot read the comment, paste the comment text instead; the bot retains its link as the reply target.
+
+This flow does not call the paid X API, scrape your account, or post replies automatically. Use a free-tier LLM provider within its limits to avoid generation charges. It uses the existing database and needs no new migration. Automatic monitoring of new comments is not included.

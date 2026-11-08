@@ -55,6 +55,7 @@ describe("telegram bot", () => {
     await bot.handleUpdate(msg("/status", 999));
     await bot.handleUpdate(msg("/pause", 999));
     await bot.handleUpdate(msg("/login", 999));
+    await bot.handleUpdate(msg("/comments", 999));
     expect(sent.length).toBe(before);
     const { getSettings } = await import("@/lib/settings");
     expect((await getSettings()).paused).toBe(false);
@@ -240,6 +241,51 @@ describe("telegram bot", () => {
     const { db, schema } = await import("@/lib/db");
     const rows = await db().select().from(schema.replySuggestions);
     expect(rows.some((r) => r.handle === "somedev" && r.tweetText.includes("pnpm workspaces & turbo are overkill"))).toBe(true);
+  });
+
+  it("offers a free comment flow with links to your posts and review-before-posting instructions", async () => {
+    const { db, schema } = await import("@/lib/db");
+    const [post] = await db().insert(schema.posts).values({ provider: "manual", tweetId: "1850000000000000100", text: "my original post" }).returning();
+    await bot.handleUpdate(msg("/comments"));
+    expect(lastText()).toContain("press Post yourself");
+    expect(lastText()).toContain("No paid X API");
+    expect(JSON.stringify(sent.at(-1)?.payload.reply_markup)).toContain(`Comments on post #${post.id}`);
+    await bot.handleUpdate(msg("/cancel"));
+  });
+
+  it("drafts responses to a comment using only its public embed and targets the comment's link", async () => {
+    const spy = mockOembed();
+    try {
+      const before = sent.length;
+      await bot.handleUpdate(msg("/comments https://x.com/somedev/status/1850000000000000101"));
+      const options = sent.slice(before).filter((s) => String(s.payload.text).startsWith("→"));
+      expect(options).toHaveLength(2);
+      expect(JSON.stringify(options[0].payload.reply_markup)).toContain("in_reply_to=1850000000000000101");
+      expect(spy.mock.calls.every(([url]) => String(url).startsWith("https://publish.x.com/oembed"))).toBe(true);
+      const { getBotState } = await import("@/lib/actions/onboarding");
+      expect((await getBotState(String(OWNER))).mode).toBe("idle");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("uses pasted comment text when the embed is unavailable, preserving the reply target", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not found", { status: 404 }));
+    try {
+      await bot.handleUpdate(msg("/comments https://x.com/somedev/status/1850000000000000102"));
+      expect(lastText()).toContain("Paste its text");
+      const before = sent.length;
+      await bot.handleUpdate(msg("Would a transaction prevent partial writes here? Original post context: https://x.com/me/status/1850000000000000100"));
+      const options = sent.slice(before).filter((s) => String(s.payload.text).startsWith("→"));
+      expect(options).toHaveLength(2);
+      expect(JSON.stringify(options[0].payload.reply_markup)).toContain("in_reply_to=1850000000000000102");
+      expect(spy).toHaveBeenCalledTimes(1);
+      const { db, schema } = await import("@/lib/db");
+      const rows = await db().select().from(schema.replySuggestions);
+      expect(rows.some((r) => r.tweetId === "1850000000000000102" && r.tweetText.includes("partial writes"))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("manual mode: after a handoff, your link attaches to the post (and someone else's can still get reply ideas)", async () => {

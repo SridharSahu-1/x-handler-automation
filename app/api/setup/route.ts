@@ -19,6 +19,7 @@ export async function GET(req: Request) {
     { command: "new", description: "Draft a post now" },
     { command: "status", description: "Today's status" },
     { command: "trends", description: "Top trends" },
+    { command: "comments", description: "Respond to comments without X API fees" },
     { command: "replies", description: "Reply ideas" },
     { command: "stats", description: "Last 7 days" },
     { command: "pause", description: "Stop all posting" },

@@ -9,7 +9,7 @@ import { env, optionalEnv, isDryRun } from "../env";
 import { db, schema } from "../db";
 import { getSettings, setSetting } from "../settings";
 import { decide, editDraft, getDraft, deletePost, latestPendingDraft, attachTweet } from "../actions/drafts";
-import { suggestRepliesFor, replyIntentUrl } from "../actions/replies";
+import { suggestRepliesFor, suggestRepliesTo, fetchTweet, replyIntentUrl } from "../actions/replies";
 import { recordRating } from "../actions/learning";
 import { publisherMode, canEditProfile } from "../publisher";
 import { tweetIdFromUrl } from "../publisher/buffer";
@@ -37,6 +37,7 @@ const HELP = `<b>Commands</b>
 /pause · /resume - kill switch for all posting
 /stats - last 7 days
 /trends - today's top trends
+/comments [comment link] - respond to comments without X API fees
 /replies - reply ideas for you to post
 (paste any X post link and I'll draft replies to it)
 /profile - propose name/bio/location
@@ -93,6 +94,16 @@ async function handleUserText(ctx: Context, text: string) {
     return afterOnboarding(ctx);
   }
   const link = text.match(/https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/\S+\/status(?:es)?\/\d+\S*/)?.[0];
+  if (st.mode === "comments") {
+    if (link && (typeof st.data.tweetId !== "string" || text.trim() === link)) return sendCommentIdeas(ctx, tweetIdFromUrl(link)!);
+    if (typeof st.data.tweetId === "string") {
+      await ctx.reply("Drafting responses from the comment text…");
+      const { rows } = await suggestRepliesTo({ id: st.data.tweetId, handle: "commenter", text }, true);
+      await setBotState(chatId, "idle");
+      return sendReplyOptions(ctx, rows);
+    }
+    return ctx.reply("Paste the comment's X link first (Share → Copy link). /cancel to leave comment mode.");
+  }
   if (link && (st.mode === "idle" || st.mode === "awaitlink")) return handleLink(ctx, link, st);
   if (st.mode === "edit") {
     const draftId = Number(st.data.draftId);
@@ -124,6 +135,22 @@ async function sendReplyIdeas(ctx: Context, tweetId: string) {
   await ctx.reply("Reading the post and drafting replies…");
   const { tweet, rows } = await suggestRepliesFor(`https://x.com/i/status/${tweetId}`);
   if (!tweet) return ctx.reply("Couldn't read that post (deleted, protected, or not a post link).");
+  return sendReplyOptions(ctx, rows);
+}
+
+async function sendCommentIdeas(ctx: Context, tweetId: string) {
+  await ctx.reply("Reading the comment and drafting responses…");
+  const tweet = await fetchTweet(`https://x.com/i/status/${tweetId}`).catch(() => null);
+  if (!tweet) {
+    await setBotState(String(ctx.chat!.id), "comments", { tweetId });
+    return ctx.reply("I couldn't read that comment for free. Paste its text here instead; include your original post for context if needed. I'll keep the comment link so the reply opens in the right place. /cancel to stop.");
+  }
+  const { rows } = await suggestRepliesTo(tweet, true);
+  await setBotState(String(ctx.chat!.id), "idle");
+  return sendReplyOptions(ctx, rows);
+}
+
+async function sendReplyOptions(ctx: Context, rows: typeof schema.replySuggestions.$inferSelect[]) {
   if (!rows.length) return ctx.reply("Nothing worth adding to that one, honestly. Skip it and find a post where you've got a real take.");
   for (const r of rows) {
     await ctx.reply(`→ <code>${escapeHtml(r.suggestion)}</code>`, {
@@ -252,6 +279,20 @@ export function getBot() {
     t.slice(0, 6).forEach((x, i) => kb.text(`Write #${i + 1}`, `tw:${x.id}`).row());
     return ctx.reply(t.slice(0, 6).map((x, i) => `${i + 1}. ${escapeHtml(x.title)} <i>(${x.source}, ${x.score})</i>`).join("\n") || "No trends found.", {
       parse_mode: "HTML",
+      reply_markup: kb,
+    });
+  });
+
+  bot.command("comments", async (ctx) => {
+    await setBotState(String(ctx.chat.id), "comments");
+    const tweetId = tweetIdFromUrl(ctx.match?.trim() ?? "");
+    if (tweetId) return sendCommentIdeas(ctx, tweetId);
+    const posts = await db().select().from(schema.posts).orderBy(desc(schema.posts.id)).limit(10);
+    const kb = new InlineKeyboard();
+    for (const post of posts.filter((p) => p.tweetId && !p.tweetId.startsWith("dry-") && !p.deleted).slice(0, 4)) {
+      kb.url(`Comments on post #${post.id}`, `https://x.com/i/status/${post.tweetId}`).row();
+    }
+    return ctx.reply("Open one of your posts, copy a comment's link (Share → Copy link), and paste it here. I'll suggest responses in your voice. Choose one, tap Reply on X, then press Post yourself. No paid X API access is needed.", {
       reply_markup: kb,
     });
   });
