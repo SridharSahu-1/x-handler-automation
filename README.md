@@ -76,7 +76,8 @@ fastest way to get a new account locked. The app never does it.
    - **Gemini**: aistudio.google.com → API key. **Groq**: console.groq.com. **OpenRouter** (fallback): openrouter.ai.
    - **Tavily** (search, 1,000/month free). Optional: Exa, Serper.
 2. **Vercel**: import this repo, then add **Neon Postgres** and a **public Blob store** from the Marketplace (they set `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN`).
-3. Copy every variable from `.env.example` into Vercel → Settings → Environment Variables. Keep `DRY_RUN=1` at first.
+3. For dashboard Telegram login, set `TELEGRAM_BOT_USERNAME` to your bot's username (without `@`) and `TELEGRAM_CHAT_ID` to your own **private** chat id. In @BotFather use `/setdomain`, choose that same bot, and link the deployed dashboard domain. Login must use that domain and the same Telegram account. Preview deployment domains need their own domain configuration. If the widget is blocked or the domain is not configured, send `/login` to your bot for a private sign-in link valid for 5 minutes; set `APP_URL` to the deployed dashboard URL.
+   Copy every variable from `.env.example` into Vercel → Settings → Environment Variables. Keep `DRY_RUN=1` at first.
 4. Run migrations: `vercel env pull .env.local && pnpm db:migrate`.
 5. Check every key: `pnpm smoke`. It shows which posting mode is active and checks Buffer's connection to your X channel. (With X API keys, `pnpm smoke --write` also posts and deletes a test tweet.) `pnpm llm:check` runs every structured LLM call against each provider on its own, which catches a schema one provider rejects.
 6. Deploy, then register the webhook once:

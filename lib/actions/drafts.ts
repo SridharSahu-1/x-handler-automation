@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { resumeHook } from "workflow/api";
 import { FatalError } from "workflow";
 import { db, schema } from "../db";
@@ -6,6 +6,8 @@ import { publish, unpublish, postUrl } from "../publisher";
 import { embedText } from "../llm";
 import { fitsTweet } from "../content/length";
 import { log } from "../log";
+import { canReviewDraft } from "../draft-status";
+import { getSettings } from "../settings";
 
 /** What the approval hook of a running daily-post workflow receives. Shared by Telegram + dashboard. */
 export type Decision =
@@ -26,14 +28,16 @@ export function draftText(d: NonNullable<Awaited<ReturnType<typeof getDraft>>>) 
 export async function decide(draftId: number, decision: Decision): Promise<string> {
   const d = await getDraft(draftId);
   if (!d) return "Draft not found.";
-  if (!["pending", "approved"].includes(d.status)) return `Draft is already ${d.status}.`;
+  if (!canReviewDraft(d.status)) return `Draft is already ${d.status}.`;
+  if (decision.action === "approve" && (await getSettings()).paused) return "Posting is paused. Resume before approving.";
   if (decision.action === "approve" && decision.variant !== undefined) {
+    if (!Number.isInteger(decision.variant) || !d.variants[decision.variant]) return "Variant not found.";
     await db().update(schema.drafts).set({ chosen: decision.variant, editedText: null, updatedAt: new Date() }).where(eq(schema.drafts.id, draftId));
   }
   if (decision.action === "regen" && (decision.note || decision.reason)) {
     await db().insert(schema.feedback).values({ draftId, reason: decision.note ?? decision.reason! });
   }
-  if (d.hookToken) {
+  if (d.hookToken && d.status !== "expired") {
     try {
       await resumeHook(d.hookToken, decision);
       return decision.action === "approve" ? (decision.now ? "Posting now." : "Approved. It'll go out at the slot.") : decision.action === "skip" ? "Skipped." : "Regenerating…";
@@ -44,6 +48,10 @@ export async function decide(draftId: number, decision: Decision): Promise<strin
   }
   if (decision.action === "approve") {
     const postId = await publishDraft(draftId);
+    if (postId) {
+      const { announcePosted } = await import("../telegram/posts");
+      await announcePosted(postId);
+    }
     return postId ? "Posted." : "Nothing to post.";
   }
   if (decision.action === "skip") {
@@ -80,10 +88,14 @@ export async function publishDraft(draftId: number): Promise<number | null> {
   if (d.status === "posting") {
     throw new FatalError(`Draft ${draftId} was mid-post when a previous attempt failed. Check X before retrying.`);
   }
-  await setDraftStatus(draftId, "posting");
+  if (!canReviewDraft(d.status)) return null;
   const v = d.variants[d.chosen];
   const text = draftText(d);
-  if (!text) return null;
+  if (!text || !fitsTweet(text)) throw new Error("Draft text must be non-empty and fit within 280 characters.");
+  const [claimed] = await db().update(schema.drafts).set({ status: "posting", updatedAt: new Date() })
+    .where(and(eq(schema.drafts.id, draftId), inArray(schema.drafts.status, ["pending", "approved", "expired"])))
+    .returning({ id: schema.drafts.id });
+  if (!claimed) return null;
   let result: Awaited<ReturnType<typeof publish>>;
   try {
     result = await publish({ text, imageUrl: v?.assetUrl ?? null, selfReply: v?.selfReply ?? null });

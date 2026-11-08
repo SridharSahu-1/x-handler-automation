@@ -1,4 +1,4 @@
-import { Api, InlineKeyboard, InputFile } from "grammy";
+import { Api, InlineKeyboard, InputFile, type Context } from "grammy";
 import { env, optionalEnv, isDryRun } from "../env";
 import { tweetLength } from "../content/length";
 import type { drafts } from "../db/schema";
@@ -62,7 +62,7 @@ export function draftCaption(d: typeof drafts.$inferSelect, extra?: string) {
     d.scheduledFor ? `🕒 Slot: ${d.scheduledFor.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })} IST` : "",
     extra ?? "",
   ];
-  return lines.filter((l) => l !== "").join("\n").slice(0, 1020);
+  return lines.filter((l) => l !== "").join("\n");
 }
 
 /** Sends (or refreshes) the approval card for a draft, with its image when it has one. */
@@ -73,13 +73,44 @@ export async function sendDraftCard(d: typeof drafts.$inferSelect, extra?: strin
   const reply_markup = draftKeyboard(d);
   try {
     if (v?.assetUrl) {
-      const m = await tg().sendPhoto(ownerChatId(), new InputFile(new URL(v.assetUrl)), { caption, parse_mode: "HTML", reply_markup });
+      const m = await tg().sendPhoto(ownerChatId(), new InputFile(new URL(v.assetUrl)), {
+        caption: photoCaption(d, caption), parse_mode: "HTML", reply_markup,
+      });
+      if (caption.length > 1024) await notify(caption, reply_markup);
       return m.message_id;
     }
     const m = await tg().sendMessage(ownerChatId(), caption, { parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } });
     return m.message_id;
   } catch (e) {
     console.error("telegram draft card failed", e);
-    return notify(`Draft #${d.id} is ready but the card failed to send. Open the dashboard.`);
+    return notify(`${caption}\n\n⚠️ Image preview unavailable. Open the dashboard to view the image.`, reply_markup);
+  }
+}
+
+// Never cut an HTML string mid-tag/entity to fit Telegram's photo caption limit.
+function photoCaption(d: typeof drafts.$inferSelect, caption: string) {
+  return caption.length <= 1024 ? caption : `<b>Draft #${d.id}</b> · Variant ${d.chosen + 1}\nFull draft details below.`;
+}
+
+/** A variant change must replace the media as well as the text. */
+export async function refreshDraftCard(ctx: Context, d: typeof drafts.$inferSelect) {
+  const caption = draftCaption(d);
+  const opts = { parse_mode: "HTML" as const, reply_markup: draftKeyboard(d) };
+  const image = d.variants[d.chosen]?.assetUrl;
+  const message = ctx.callbackQuery?.message;
+  try {
+    if (image) {
+      await ctx.editMessageMedia({ type: "photo", media: new InputFile(new URL(image)), caption: photoCaption(d, caption), parse_mode: "HTML" }, { reply_markup: opts.reply_markup });
+      if (caption.length > 1024) await notify(caption, opts.reply_markup);
+    } else if (message && "photo" in message && message.photo) {
+      // Telegram cannot turn a photo into a text-only message. Replace the card.
+      const replacement = await sendDraftCard(d);
+      if (replacement) await ctx.deleteMessage();
+    } else {
+      await ctx.editMessageText(caption, { ...opts, link_preview_options: { is_disabled: true } });
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("message is not modified")) return;
+    await sendDraftCard(d);
   }
 }

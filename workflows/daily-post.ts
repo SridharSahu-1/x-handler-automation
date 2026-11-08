@@ -68,7 +68,7 @@ export async function dailyPost(
         await markStep(draftId, "approved", `⏰ No response, and draft #${draftId} cleared the quality bar, so it's going out now.`);
         break;
       }
-      await markStep(draftId, "expired", `⌛ Draft #${draftId} expired without approval${manual ? "" : " and didn't clear the auto-post bar"}. Nothing posted.`);
+      await markStep(draftId, "expired", `⌛ Draft #${draftId} missed its approval window${manual ? "" : " and didn't clear the auto-post bar"}. Nothing posted. You can still approve it or tap Post now later.`);
       return { status: "expired", draftId };
     }
     if (ev.action === "skip") {

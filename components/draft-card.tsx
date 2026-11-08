@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import twitter from "twitter-text";
 import type { drafts } from "@/lib/db/schema";
+import { canReviewDraft } from "@/lib/draft-status";
 import { Badge, Button } from "./ui";
 import { decideAction, pickVariant, saveEdit } from "@/app/(dashboard)/actions";
 
@@ -14,7 +15,7 @@ export function DraftCard({ d }: { d: Draft }) {
   const [msg, setMsg] = useState("");
   const [pending, start] = useTransition();
   const parsed = twitter.parseTweet(text);
-  const live = d.status === "pending" || d.status === "approved";
+  const live = canReviewDraft(d.status);
   const run = (fn: () => Promise<string | void>) => start(async () => setMsg((await fn()) || "Done"));
 
   return (
@@ -75,7 +76,7 @@ export function DraftCard({ d }: { d: Draft }) {
 
       {live && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button variant="primary" disabled={pending} onClick={() => run(() => decideAction(d.id, { action: "approve" }))}>Approve for slot</Button>
+          <Button variant="primary" disabled={pending} onClick={() => run(() => decideAction(d.id, { action: "approve" }))}>{d.status === "expired" ? "Approve and post" : "Approve for slot"}</Button>
           <Button disabled={pending} onClick={() => run(() => decideAction(d.id, { action: "approve", now: true }))}>Post now</Button>
           <Button disabled={pending} onClick={() => run(() => decideAction(d.id, { action: "regen", reason: "boring", note: "Boring / obvious. Needs a sharper angle." }))}>Regenerate</Button>
           <Button disabled={pending} onClick={() => run(() => decideAction(d.id, { action: "regen", reason: "topic", note: "Wrong topic for this account." }))}>New topic</Button>

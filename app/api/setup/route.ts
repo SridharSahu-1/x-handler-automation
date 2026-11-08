@@ -15,6 +15,7 @@ export async function GET(req: Request) {
     drop_pending_updates: true,
   });
   await api.setMyCommands([
+    { command: "login", description: "Get a dashboard sign-in link" },
     { command: "new", description: "Draft a post now" },
     { command: "status", description: "Today's status" },
     { command: "trends", description: "Top trends" },

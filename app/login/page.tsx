@@ -21,16 +21,19 @@ async function LoginForm({ searchParams }: { searchParams: PageProps<"/login">["
   const sp = await searchParams;
   const error = typeof sp.error === "string" ? sp.error : null;
   const next = typeof sp.next === "string" ? sp.next : "/";
-  const bot = process.env.TELEGRAM_BOT_USERNAME;
+  const bot = process.env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, "");
+  const telegramReady = bot && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID;
   return (
     <>
-      {error && <p className="mb-3 text-sm text-red-500">{error === "telegram" ? "That Telegram account isn't allowed." : "Wrong password."}</p>}
-      {bot && (
+      {error && <p className="mb-3 text-sm text-red-500">{error === "telegram" ? "Telegram login failed. Use your configured owner account and try again." : "Wrong password."}</p>}
+      {telegramReady && (
         <>
           <TelegramLogin bot={bot} />
+          <p className="mt-3 text-xs text-muted">You can also send /login to your bot for a private sign-in link. If the widget reports an invalid domain, use /setdomain in @BotFather.</p>
           <div className="my-4 text-center text-xs text-muted">or</div>
         </>
       )}
+      {!telegramReady && process.env.TELEGRAM_BOT_TOKEN && <p className="mb-4 text-sm text-muted">Send /login to your Telegram bot for a private sign-in link.</p>}
       <form action={passwordLogin} className="space-y-3">
         <input type="hidden" name="next" value={next} />
         <input name="password" type="password" placeholder="Dashboard password" className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm" />

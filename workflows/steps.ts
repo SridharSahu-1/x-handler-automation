@@ -1,18 +1,18 @@
 import { desc, eq, isNotNull } from "drizzle-orm";
-import { InlineKeyboard, InputFile } from "grammy";
+import { InlineKeyboard } from "grammy";
 import { db, schema } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { RetryableError } from "workflow";
 import { planTopic, startDraft, reviewVariant, finishDraft, failDraft, type TopicPlan } from "@/lib/content/pipeline";
 import { cooldownFor } from "@/lib/llm";
 import { publishDraft, getDraft, setDraftStatus } from "@/lib/actions/drafts";
-import { sendDraftCard, notify, tg, ownerChatId } from "@/lib/telegram/send";
-import { publisherMode, fetchMetrics, resolveTweetId, composeIntentUrl, postUrl } from "@/lib/publisher";
+import { sendDraftCard, notify } from "@/lib/telegram/send";
+import { publisherMode, fetchMetrics, resolveTweetId, postUrl } from "@/lib/publisher";
 import { engagementScore, armTrials } from "@/lib/content/bandit";
 import { updateBanditFor } from "@/lib/actions/learning";
-import { getBotState, setBotState } from "@/lib/actions/onboarding";
+import { announcePosted } from "@/lib/telegram/posts";
 import { slotDate } from "@/lib/time";
-import { isDryRun, optionalEnv } from "@/lib/env";
+import { isDryRun } from "@/lib/env";
 import { log } from "@/lib/log";
 
 export async function isPausedStep() {
@@ -117,55 +117,9 @@ export async function publisherModeStep() {
   return publisherMode();
 }
 
-async function postLink(tweetId: string | null) {
-  const url = postUrl(tweetId);
-  if (!url || publisherMode() !== "xapi") return url;
-  try {
-    const { me } = await import("@/lib/x/client");
-    return `https://x.com/${(await me()).username}/status/${tweetId}`;
-  } catch {
-    return url;
-  }
-}
-
 export async function announcePostedStep(postId: number) {
   "use step";
-  const [p] = await db().select().from(schema.posts).where(eq(schema.posts.id, postId));
-  if (p.provider === "manual" && !isDryRun()) return handoffPost(p);
-  const link = await postLink(p.tweetId);
-  const via = p.provider === "buffer" ? " via Buffer" : "";
-  await notify(
-    `🟢 Posted${via}${isDryRun() ? " (dry run)" : ""}.\n${link ?? (p.provider === "buffer" ? "Buffer is still sending it; I'll grab the link." : "")}\n\nThe first hour matters most: reply to anyone who comments (mutual replies are weighted ×15 in the ranker).`,
-    new InlineKeyboard().text("🗑 Delete", `del:${postId}`),
-  );
-}
-
-/**
- * Manual mode: you're the one who presses Post. Sends the exact text (tap to copy), the image to save,
- * and a button that opens X's composer pre-filled. Reply with the post's link so I can track it.
- */
-async function handoffPost(p: typeof schema.posts.$inferSelect) {
-  const d = p.draftId ? await getDraft(p.draftId) : null;
-  const v = d?.variants[d.chosen];
-  const html = (t: string) => t.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
-  const kb = new InlineKeyboard().url("✍️ Open X with this text", composeIntentUrl(p.text)).row().text("✅ Posted it", `mp:${p.id}`).text("⏭ Not posting", `np:${p.id}`);
-  if (v?.assetUrl && optionalEnv("TELEGRAM_BOT_TOKEN")) {
-    // Sent as a file so Telegram doesn't recompress it: long-press → save, then attach in X.
-    await tg().sendDocument(ownerChatId(), new InputFile(new URL(v.assetUrl), "post.png"), { caption: "🖼 Image for the post: save it and attach it in X." }).catch(() => {});
-  }
-  await notify(
-    [
-      `📤 <b>Time to post #${p.id}</b> (tap the text to copy)`,
-      "",
-      `<code>${html(p.text)}</code>`,
-      v?.selfReply ? `\n↳ Then reply to your own post with:\n<code>${html(v.selfReply)}</code>` : "",
-      "",
-      "After posting, send me the link to the post so I can track it.",
-    ].filter((l) => l !== undefined).join("\n"),
-    kb,
-  );
-  const chat = optionalEnv("TELEGRAM_CHAT_ID");
-  if (chat && (await getBotState(chat)).mode === "idle") await setBotState(chat, "awaitlink", { postId: p.id });
+  await announcePosted(postId);
 }
 
 /** Buffer: if the post was still sending when announced, fetch the real link once it's out. */

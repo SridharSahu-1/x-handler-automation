@@ -3,6 +3,8 @@ import { experimental_transcribe as transcribe } from "ai";
 import { createGroq } from "@ai-sdk/groq";
 import { desc, eq, gte } from "drizzle-orm";
 import { start } from "workflow/api";
+import { createTelegramLoginToken } from "../auth";
+import { canReviewDraft } from "../draft-status";
 import { env, optionalEnv, isDryRun } from "../env";
 import { db, schema } from "../db";
 import { getSettings, setSetting } from "../settings";
@@ -14,7 +16,7 @@ import { tweetIdFromUrl } from "../publisher/buffer";
 import { getBotState, setBotState, saveInterviewAnswer, draftStyleCard, finishOnboarding, resetInterview } from "../actions/onboarding";
 import { proposeProfile, applyProfileChange, proposeAvatar, proposeBanner, PROFILE_EDIT_URL } from "../actions/profile";
 import { INTERVIEW_QUESTIONS } from "../content/voice";
-import { sendDraftCard, draftCaption, draftKeyboard } from "./send";
+import { sendDraftCard, refreshDraftCard } from "./send";
 import { storeFile } from "../assets/store";
 import { recentUnusedTrends, collectTrends } from "../trends";
 import { slotDate, fmtLocal } from "../time";
@@ -29,6 +31,7 @@ const REGEN_REASONS: Record<string, string> = {
 };
 
 const HELP = `<b>Commands</b>
+/login - get a dashboard sign-in link (valid for 5 minutes)
 /new [topic] - draft a post now (optionally about a topic)
 /status - what's happening today
 /pause · /resume - kill switch for all posting
@@ -160,6 +163,17 @@ export function getBot() {
     );
     await setBotState(String(ctx.chat.id), "interview", { i: 0 });
     return askQuestion(ctx, 0);
+  });
+  bot.command("login", async (ctx) => {
+    const base = optionalEnv("APP_URL");
+    if (!base) return ctx.reply("Set APP_URL to your dashboard URL before using /login.");
+    const url = new URL("/api/auth/telegram", base);
+    url.searchParams.set("token", await createTelegramLoginToken());
+    return ctx.reply("Use this private link to sign in to your dashboard. It expires in 5 minutes.", {
+      reply_markup: new InlineKeyboard().url("Log in to dashboard", url.toString()),
+      link_preview_options: { is_disabled: true },
+      protect_content: true,
+    });
   });
   bot.command("help", (ctx) => ctx.reply(HELP, { parse_mode: "HTML" }));
   bot.command("cancel", async (ctx) => {
@@ -297,16 +311,19 @@ export function getBot() {
     try {
       switch (kind) {
         case "pk": {
-          await db().update(schema.drafts).set({ chosen: Number(b), editedText: null }).where(eq(schema.drafts.id, id));
-          const d = await getDraft(id);
-          if (d) {
-            const caption = draftCaption(d);
-            const opts = { parse_mode: "HTML" as const, reply_markup: draftKeyboard(d) };
-            if (ctx.callbackQuery.message?.photo) await ctx.editMessageCaption({ caption, ...opts }).catch(() => sendDraftCard(d));
-            else await ctx.editMessageText(caption, { ...opts, link_preview_options: { is_disabled: true } }).catch(() => sendDraftCard(d));
-            // Different variant may carry a different image: resend if so.
-            if (d.variants[d.chosen]?.assetUrl && !ctx.callbackQuery.message?.photo) await sendDraftCard(d);
+          const before = await getDraft(id);
+          if (!before || !canReviewDraft(before.status)) {
+            answer = before ? `Draft is already ${before.status}.` : "Draft not found.";
+            break;
           }
+          const chosen = Number(b);
+          if (!Number.isInteger(chosen) || !before.variants[chosen]) {
+            answer = "Variant not found.";
+            break;
+          }
+          await db().update(schema.drafts).set({ chosen, editedText: null, updatedAt: new Date() }).where(eq(schema.drafts.id, id));
+          const d = await getDraft(id);
+          if (d) await refreshDraftCard(ctx, d);
           answer = `Variant ${Number(b) + 1}`;
           break;
         }
